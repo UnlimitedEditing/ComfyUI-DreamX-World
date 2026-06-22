@@ -399,6 +399,21 @@ class DreamXModelLoader:
         pipeline.generator.to(device=device)
         pipeline.vae.to(device=device)
 
+        # Patch vae.decode_to_pixel to evict the generator from VRAM first.
+        # After diffusion completes, the generator (10.5 GB bf16) + KV cache
+        # leave no room for VAE decode activations (~2.6 GB). Offloading the
+        # generator to CPU before each decode and restoring it after costs ~0.3s
+        # per chunk (PCIe transfer) but prevents the OOM.
+        _gen = pipeline.generator
+        _orig_decode = pipeline.vae.decode_to_pixel
+        def _decode_with_generator_offload(latents):
+            _gen.cpu()
+            torch.cuda.empty_cache()
+            out = _orig_decode(latents)
+            _gen.to(device)
+            return out
+        pipeline.vae.decode_to_pixel = _decode_with_generator_offload
+
         _PIPELINE_CACHE[cache_key] = pipeline
         print("[DreamXModelLoader] pipeline ready")
         return (pipeline,)
