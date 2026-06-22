@@ -262,13 +262,18 @@ class DreamXModelLoader:
                 self._wget(url, dest)
 
         if not os.path.exists(fp8_ckpt):
+            # concept_mapping places the fp32 at DreamX-World-5B/model.safetensors;
+            # fall back to a self-downloaded temp path if it isn't there yet.
+            fp32_cm  = fp8_ckpt.replace("DreamX-World-5B-fp8", "DreamX-World-5B")
             fp32_tmp = fp8_ckpt.replace("DreamX-World-5B-fp8", "DreamX-World-5B-fp32-tmp")
-            if not os.path.exists(fp32_tmp):
+            fp32_src = fp32_cm if os.path.exists(fp32_cm) else fp32_tmp
+            if not os.path.exists(fp32_src):
                 self._wget(f"{DX}/model.safetensors", fp32_tmp)
-            if os.path.exists(fp32_tmp):
+                fp32_src = fp32_tmp
+            if os.path.exists(fp32_src):
                 print("[DreamXModelLoader] converting fp32 -> fp8 (~5.25 GB) ...")
                 from safetensors.torch import load_file as _lf, save_file as _sf
-                sd = _lf(fp32_tmp)
+                sd = _lf(fp32_src)
                 sd_fp8 = {
                     k: v.to(torch.float8_e4m3fn)
                     if v.dtype in (torch.float32, torch.float16, torch.bfloat16)
@@ -278,7 +283,9 @@ class DreamXModelLoader:
                 os.makedirs(os.path.dirname(fp8_ckpt), exist_ok=True)
                 _sf(sd_fp8, fp8_ckpt)
                 print(f"[DreamXModelLoader] fp8 saved: {os.path.getsize(fp8_ckpt)/1e9:.1f} GB")
-                os.remove(fp32_tmp)
+                # Only remove the self-downloaded temp; leave concept_mapping file intact
+                if fp32_src == fp32_tmp and os.path.exists(fp32_tmp):
+                    os.remove(fp32_tmp)
 
     def load(self, wan_base_path, checkpoint_path, frames_per_chunk):
         wan_base_path  = self._resolve_path(wan_base_path)
