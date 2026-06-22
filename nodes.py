@@ -156,7 +156,7 @@ class DreamXModelLoader:
                     "multiline": False,
                 }),
                 "frames_per_chunk": ("INT", {
-                    "default": 13, "min": 7, "max": 123, "step": 2,
+                    "default": 12, "min": 3, "max": 123, "step": 3,
                     "display": "number",
                 }),
             }
@@ -397,7 +397,7 @@ class DreamXCameraSequence:
                     "default": "forward,arc_left,forward,static",
                 }),
                 "frames_per_chunk": ("INT", {
-                    "default": 13, "min": 7, "max": 123, "step": 2,
+                    "default": 12, "min": 3, "max": 123, "step": 3,
                 }),
                 "fps":   ("INT", {"default": 16, "min": 8, "max": 30}),
                 "seed":  ("INT", {"default": 42, "min": 0, "max": 2**32 - 1}),
