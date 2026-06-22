@@ -40,8 +40,29 @@ def _find_dreamx_repo():
 
 def _ensure_dreamx_on_path():
     dreamx_dir = _find_dreamx_repo()
-    if dreamx_dir not in sys.path:
-        sys.path.insert(0, dreamx_dir)
+
+    # Ensure subdirs have __init__.py so they register as regular packages
+    # and aren't shadowed by namespace packages from other custom nodes.
+    for subdir in ("utils", "pipeline", "wan"):
+        init = os.path.join(dreamx_dir, subdir, "__init__.py")
+        if not os.path.exists(init):
+            open(init, "w").close()
+
+    # Move DreamX-World to the front of sys.path unconditionally.
+    if dreamx_dir in sys.path:
+        sys.path.remove(dreamx_dir)
+    sys.path.insert(0, dreamx_dir)
+
+    # If 'utils' was already imported from a different package, evict it so
+    # the next import picks up DreamX-World/utils/ instead.
+    existing = sys.modules.get("utils")
+    if existing is not None:
+        existing_file = getattr(existing, "__file__", "") or ""
+        if dreamx_dir not in existing_file:
+            for key in list(sys.modules.keys()):
+                if key == "utils" or key.startswith("utils."):
+                    del sys.modules[key]
+
     return dreamx_dir
 
 # ─── predefined camera moves ─────────────────────────────────────────────────
@@ -131,11 +152,11 @@ class DreamXModelLoader:
                     "multiline": False,
                 }),
                 "checkpoint_path": ("STRING", {
-                    "default": "/comfyui/models/dreamx/DreamX-World-5B/model.safetensors",
+                    "default": "/comfyui/models/dreamx/DreamX-World-5B-bf16/model.safetensors",
                     "multiline": False,
                 }),
                 "frames_per_chunk": ("INT", {
-                    "default": 25, "min": 7, "max": 123, "step": 2,
+                    "default": 13, "min": 7, "max": 123, "step": 2,
                     "display": "number",
                 }),
             }
@@ -245,7 +266,7 @@ class DreamXCameraSequence:
                     "default": "forward,arc_left,forward,static",
                 }),
                 "frames_per_chunk": ("INT", {
-                    "default": 25, "min": 7, "max": 123, "step": 2,
+                    "default": 13, "min": 7, "max": 123, "step": 2,
                 }),
                 "fps":   ("INT", {"default": 16, "min": 8, "max": 30}),
                 "seed":  ("INT", {"default": 42, "min": 0, "max": 2**32 - 1}),
