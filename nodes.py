@@ -97,6 +97,42 @@ CAMERA_MOVES = {
 
 MOVE_NAMES = sorted(CAMERA_MOVES.keys())
 
+# ─── flash-attn → SDPA fallback ──────────────────────────────────────────────
+
+def _patch_flash_attn_fallback():
+    """
+    Replace DreamX's flash_attention with a SDPA fallback when flash_attn2 is
+    not installed. The patch respects k_lens masking so padding tokens in the
+    text context are correctly excluded from cross-attention.
+    """
+    try:
+        import wan.modules.attention as attn_mod
+        if getattr(attn_mod, "FLASH_ATTN_2_AVAILABLE", True):
+            return  # flash_attn2 is available — nothing to patch
+        import torch, torch.nn.functional as F
+
+        def _sdpa(q, k, v, q_lens=None, k_lens=None, window_size=(-1, -1), **kw):
+            # Incoming shape: (batch, seq, heads, head_dim)
+            b, s_q, h, d = q.shape
+            q = q.transpose(1, 2)   # → (b, h, s_q, d)
+            k = k.transpose(1, 2)
+            v = v.transpose(1, 2)
+
+            mask = None
+            if k_lens is not None:
+                s_k = k.shape[2]
+                # True = attend, False = ignore padding
+                m = torch.arange(s_k, device=q.device).unsqueeze(0) < k_lens.to(q.device).unsqueeze(1)
+                mask = m.unsqueeze(1).unsqueeze(1).expand(b, h, s_q, s_k)
+
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+            return out.transpose(1, 2).contiguous()  # → (b, s_q, h, d)
+
+        attn_mod.flash_attention = _sdpa
+        print("[DreamXModelLoader] patched flash_attention → SDPA fallback")
+    except Exception as e:
+        print(f"[DreamXModelLoader] flash_attention patch skipped: {e}")
+
 # ─── pipeline cache (one per (wan_path, checkpoint_path) pair) ───────────────
 
 _PIPELINE_CACHE: dict = {}
@@ -255,6 +291,7 @@ class DreamXModelLoader:
         self._ensure_models(wan_base_path, checkpoint_path)
 
         dreamx_dir = _ensure_dreamx_on_path()
+        _patch_flash_attn_fallback()
 
         from omegaconf import OmegaConf
         from pipeline.pipeline_causal_camera import CausalCameraInferencePipeline
