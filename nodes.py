@@ -225,7 +225,7 @@ class DreamXModelLoader:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = dest + ".tmp"
         print(f"[DreamXModelLoader] downloading {os.path.basename(dest)} ...")
-        r = subprocess.run(["wget", "-q", "--show-progress", "-O", tmp, url], check=False)
+        r = subprocess.run(["wget", "-q", "-O", tmp, url], check=False)
         if r.returncode == 0 and os.path.exists(tmp):
             os.rename(tmp, dest)
             print(f"[DreamXModelLoader]   -> {os.path.getsize(dest)/1e9:.1f} GB saved")
