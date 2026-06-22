@@ -167,7 +167,25 @@ class DreamXModelLoader:
     FUNCTION = "load"
     CATEGORY = "DreamX"
 
+    @staticmethod
+    def _resolve_path(p: str) -> str:
+        """If a path starts with /comfyui/ but doesn't exist, remap it to
+        the actual ComfyUI models directory via folder_paths."""
+        if os.path.exists(p):
+            return p
+        if p.startswith("/comfyui/models/"):
+            try:
+                import folder_paths
+                actual = p.replace("/comfyui/models", folder_paths.models_dir, 1)
+                print(f"[DreamXModelLoader] remapped {p} -> {actual}")
+                return actual
+            except Exception:
+                pass
+        return p
+
     def load(self, wan_base_path, checkpoint_path, frames_per_chunk):
+        wan_base_path  = self._resolve_path(wan_base_path)
+        checkpoint_path = self._resolve_path(checkpoint_path)
         cache_key = (wan_base_path, checkpoint_path, frames_per_chunk)
         if cache_key in _PIPELINE_CACHE:
             print("[DreamXModelLoader] using cached pipeline")
