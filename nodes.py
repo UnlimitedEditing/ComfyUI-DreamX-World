@@ -183,6 +183,67 @@ class DreamXModelLoader:
                 pass
         return p
 
+    @staticmethod
+    def _wget(url: str, dest: str) -> bool:
+        import subprocess
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        tmp = dest + ".tmp"
+        print(f"[DreamXModelLoader] downloading {os.path.basename(dest)} ...")
+        r = subprocess.run(["wget", "-q", "--show-progress", "-O", tmp, url], check=False)
+        if r.returncode == 0 and os.path.exists(tmp):
+            os.rename(tmp, dest)
+            print(f"[DreamXModelLoader]   -> {os.path.getsize(dest)/1e9:.1f} GB saved")
+            return True
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        print(f"[DreamXModelLoader]   FAILED: {url}")
+        return False
+
+    def _ensure_models(self, wan_base: str, fp8_ckpt: str):
+        """Download Wan2.2 support files and DreamX fp8 checkpoint if absent."""
+        HF = "https://huggingface.co"
+        WAN = f"{HF}/Wan-AI/Wan2.2-TI2V-5B/resolve/main"
+        DX  = f"{HF}/GD-ML/DreamX-World-5B/resolve/main"
+
+        single_files = [
+            (f"{WAN}/models_t5_umt5-xxl-enc-bf16.pth",
+             os.path.join(wan_base, "models_t5_umt5-xxl-enc-bf16.pth")),
+            (f"{WAN}/Wan2.2_VAE.pth",
+             os.path.join(wan_base, "Wan2.2_VAE.pth")),
+            (f"{WAN}/config.json",
+             os.path.join(wan_base, "config.json")),
+            (f"{WAN}/google/umt5-xxl/special_tokens_map.json",
+             os.path.join(wan_base, "google", "umt5-xxl", "special_tokens_map.json")),
+            (f"{WAN}/google/umt5-xxl/spiece.model",
+             os.path.join(wan_base, "google", "umt5-xxl", "spiece.model")),
+            (f"{WAN}/google/umt5-xxl/tokenizer.json",
+             os.path.join(wan_base, "google", "umt5-xxl", "tokenizer.json")),
+            (f"{WAN}/google/umt5-xxl/tokenizer_config.json",
+             os.path.join(wan_base, "google", "umt5-xxl", "tokenizer_config.json")),
+        ]
+        for url, dest in single_files:
+            if not os.path.exists(dest):
+                self._wget(url, dest)
+
+        if not os.path.exists(fp8_ckpt):
+            fp32_tmp = fp8_ckpt.replace("DreamX-World-5B-fp8", "DreamX-World-5B-fp32-tmp")
+            if not os.path.exists(fp32_tmp):
+                self._wget(f"{DX}/model.safetensors", fp32_tmp)
+            if os.path.exists(fp32_tmp):
+                print("[DreamXModelLoader] converting fp32 -> fp8 (~5.25 GB) ...")
+                from safetensors.torch import load_file as _lf, save_file as _sf
+                sd = _lf(fp32_tmp)
+                sd_fp8 = {
+                    k: v.to(torch.float8_e4m3fn)
+                    if v.dtype in (torch.float32, torch.float16, torch.bfloat16)
+                    else v
+                    for k, v in sd.items()
+                }
+                os.makedirs(os.path.dirname(fp8_ckpt), exist_ok=True)
+                _sf(sd_fp8, fp8_ckpt)
+                print(f"[DreamXModelLoader] fp8 saved: {os.path.getsize(fp8_ckpt)/1e9:.1f} GB")
+                os.remove(fp32_tmp)
+
     def load(self, wan_base_path, checkpoint_path, frames_per_chunk):
         wan_base_path  = self._resolve_path(wan_base_path)
         checkpoint_path = self._resolve_path(checkpoint_path)
@@ -190,6 +251,8 @@ class DreamXModelLoader:
         if cache_key in _PIPELINE_CACHE:
             print("[DreamXModelLoader] using cached pipeline")
             return (_PIPELINE_CACHE[cache_key],)
+
+        self._ensure_models(wan_base_path, checkpoint_path)
 
         dreamx_dir = _ensure_dreamx_on_path()
 
