@@ -352,7 +352,13 @@ class DreamXModelLoader:
         print(f"[DreamXModelLoader] checkpoint loaded — missing={len(missing)}, unexpected={len(unexpected)}")
 
         pipeline = pipeline.to(dtype=torch.bfloat16)
-        pipeline.text_encoder.to(device=device)
+
+        # Mirror DreamX's own low_memory path (triggers for any card < 40 GB).
+        # DynamicSwap keeps T5 encoder in CPU RAM and moves individual layers to
+        # GPU only during text encoding, freeing ~11.4 GB for generator + KV cache.
+        from utils.memory import DynamicSwapInstaller
+        DynamicSwapInstaller.install_model(pipeline.text_encoder, device=device)
+
         pipeline.generator.to(device=device)
         pipeline.vae.to(device=device)
 
