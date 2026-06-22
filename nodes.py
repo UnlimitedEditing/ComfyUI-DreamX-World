@@ -196,16 +196,23 @@ class DreamXModelLoader:
         transformer_cfg   = os.path.join(wan_base_path, "config.json")
         model_config_path = transformer_cfg if os.path.exists(transformer_cfg) else None
 
-        print(f"[DreamXModelLoader] initialising pipeline (frames_per_chunk={frames_per_chunk})")
-        pipeline = CausalCameraInferencePipeline(
-            config,
-            device=device,
-            num_output_frames=frames_per_chunk,
-            model_config_path=model_config_path,
-            text_encoder_path=text_encoder_path,
-            tokenizer_path=tokenizer_path,
-            vae_path=vae_path,
-        )
+        # DreamX-World's wan_wrapper.py uses relative paths (e.g. ./wan_models/...)
+        # that resolve against the repo root. chdir there before construction.
+        _prev_cwd = os.getcwd()
+        os.chdir(dreamx_dir)
+        try:
+            print(f"[DreamXModelLoader] initialising pipeline (frames_per_chunk={frames_per_chunk})")
+            pipeline = CausalCameraInferencePipeline(
+                config,
+                device=device,
+                num_output_frames=frames_per_chunk,
+                model_config_path=model_config_path,
+                text_encoder_path=text_encoder_path,
+                tokenizer_path=tokenizer_path,
+                vae_path=vae_path,
+            )
+        finally:
+            os.chdir(_prev_cwd)
 
         print(f"[DreamXModelLoader] loading checkpoint: {checkpoint_path}")
         if checkpoint_path.endswith(".safetensors"):
