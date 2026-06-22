@@ -196,6 +196,49 @@ class DreamXModelLoader:
         transformer_cfg   = os.path.join(wan_base_path, "config.json")
         model_config_path = transformer_cfg if os.path.exists(transformer_cfg) else None
 
+        # wan_wrapper.py expects ./wan_models/Wan2.2-TI2V-5B-Camera/config.json
+        # relative to the repo root. This file isn't shipped in the repo — write it.
+        _cam_cfg_dir = os.path.join(dreamx_dir, "wan_models", "Wan2.2-TI2V-5B-Camera")
+        _cam_cfg_file = os.path.join(_cam_cfg_dir, "config.json")
+        if not os.path.exists(_cam_cfg_file):
+            os.makedirs(_cam_cfg_dir, exist_ok=True)
+            with open(_cam_cfg_file, "w") as _f:
+                _f.write(json.dumps({
+                    "_class_name": "FSDPWan2_2Transformer3DModel",
+                    "_diffusers_version": "0.36.0.dev0",
+                    "add_control_adapter": True,
+                    "add_ref_conv": False,
+                    "attn_compress": 1,
+                    "cam_method": "prope",
+                    "cam_self_attn_layers": None,
+                    "control_adapter_type": "baseline",
+                    "cross_attn_norm": True,
+                    "cross_attn_type": "cross_attn",
+                    "dim": 3072,
+                    "downscale_factor_control_adapter": 16,
+                    "eps": 1e-06,
+                    "ffn_dim": 14336,
+                    "freq_dim": 256,
+                    "hidden_size": 3072,
+                    "in_channels": 48,
+                    "in_dim": 48,
+                    "in_dim_control_adapter": 24,
+                    "in_dim_ref_conv": 16,
+                    "model_type": "ti2v",
+                    "num_heads": 24,
+                    "num_layers": 30,
+                    "out_dim": 48,
+                    "patch_size": [1, 2, 2],
+                    "prope_compress_mode": "none",
+                    "prope_compress_ratio": 2,
+                    "qk_norm": True,
+                    "text_dim": 4096,
+                    "text_len": 512,
+                    "traning": False,
+                    "window_size": [-1, -1],
+                }, indent=2))
+            print(f"[DreamXModelLoader] wrote wan_models config to {_cam_cfg_file}")
+
         # DreamX-World's wan_wrapper.py uses relative paths (e.g. ./wan_models/...)
         # that resolve against the repo root. chdir there before construction.
         _prev_cwd = os.getcwd()
