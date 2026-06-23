@@ -527,6 +527,11 @@ class DreamXCameraSequence:
         from utils.misc import set_seed
         from utils.postprocess import postprocess_video_frames
 
+        # Auto-round frames_per_chunk to the nearest multiple of 3.
+        # The pipeline asserts num_frames % num_frame_per_block == 0 (block=3),
+        # so we silently fix any value the user passes rather than erroring.
+        frames_per_chunk = max(3, (frames_per_chunk // 3) * 3)
+
         device = torch.device("cuda")
         num_pixel_frames = (frames_per_chunk - 1) * 4 + 1
 
