@@ -535,33 +535,55 @@ class DreamXCameraSequence:
         device = torch.device("cuda")
         num_pixel_frames = (frames_per_chunk - 1) * 4 + 1
 
-        moves = [m.strip() for m in move_sequence.split(",") if m.strip()]
-        if not moves:
+        # ── parse move_sequence supporting 'move_name' or 'move_name:speed' ────
+        # speed is 0.05–1.0: fraction of the chunk that is active camera motion.
+        # speed < 1.0 dilutes the trajectory with a static hold so the camera
+        # travels a shorter distance — effectively controlling how far each move goes.
+        # Examples:  "forward:1.0"  = full push
+        #            "arc_left:0.5" = half-arc (gentler turn)
+        #            "crane_up:0.2" = barely rises
+
+        def _parse_token(token):
+            parts = token.strip().split(':', 1)
+            name = parts[0].strip()
+            spd  = float(parts[1]) if len(parts) > 1 else 1.0
+            spd  = max(0.05, min(spd, 1.0))
+
+            if name not in CAMERA_MOVES:
+                numeric = name.lstrip('-').isdigit()
+                hint = (" Tip: slot1 takes move NAMES (e.g. 'forward,arc_left'), "
+                        "not a count. Use slot2 to set frames per chunk.") if numeric else ""
+                raise ValueError(
+                    f"Unknown move '{name}'.{hint} Valid moves: {MOVE_NAMES}"
+                )
+
+            act, _ = CAMERA_MOVES[name]
+            if spd >= 1.0 or not act:
+                tspec = [(act, 1)]          # full motion (or static)
+            else:
+                tspec = [(act, spd), ("", 1.0 - spd)]  # active fraction + hold
+            return name, act, spd, tspec
+
+        raw_tokens = [t for t in move_sequence.split(",") if t.strip()]
+        if not raw_tokens:
             raise ValueError("move_sequence is empty — provide at least one move name.")
 
-        unknown = [m for m in moves if m not in CAMERA_MOVES]
-        if unknown:
-            # Check if user passed a number — common mistake (thinking slot1 = move count)
-            numeric = [m for m in unknown if m.strip().lstrip('-').isdigit()]
-            hint = (
-                " Tip: slot1 takes move NAMES (e.g. 'forward,arc_left'), not a count. "
-                "Use slot2 to set frames per chunk."
-            ) if numeric else ""
-            raise ValueError(
-                f"Unknown move(s): {unknown}.{hint} "
-                f"Valid moves: {MOVE_NAMES}"
-            )
+        parsed = [_parse_token(t) for t in raw_tokens]   # raises on bad names
 
-        print(f"[DreamXCameraSequence] {len(moves)} chunk(s): {moves}")
+        move_names  = [p[0] for p in parsed]
+        traj_specs  = [p[3] for p in parsed]
+
+        print(f"[DreamXCameraSequence] {len(parsed)} chunk(s): "
+              + ", ".join(f"{p[0]}:{p[2]:.2f}" for p in parsed))
 
         all_frames = []
         current_pil = _comfy_image_to_pil(init_image)
 
-        for i, move_name in enumerate(moves):
-            action_str, speed = CAMERA_MOVES[move_name]
+        for i, (move_name, action_str, spd, trajectory_spec) in enumerate(parsed):
             set_seed(seed + i)
 
-            print(f"[DreamXCameraSequence] chunk {i+1}/{len(moves)}: {move_name!r} (action={action_str!r})")
+            print(f"[DreamXCameraSequence] chunk {i+1}/{len(parsed)}: "
+                  f"{move_name!r} speed={spd:.2f} → traj={trajectory_spec}")
 
             # 1. Encode current init image → first latent frame
             img_tensor = _pil_to_dreamx_tensor(current_pil, device)
@@ -576,10 +598,7 @@ class DreamXCameraSequence:
             )
             noise[:, 0] = initial_latent
 
-            # 3. Build camera trajectory → PRoPE conditioning dict
-            # 'static' uses an empty action string — treat as identity trajectory
-            eff_action = action_str if action_str else "w"  # minimal forward for neutral
-            trajectory_spec = [(eff_action, speed)]
+            # 3. trajectory_spec already built by _parse_token
 
             _, cam_params_np, _ = generate_trajectory_from_json(
                 trajectory_spec=trajectory_spec,
