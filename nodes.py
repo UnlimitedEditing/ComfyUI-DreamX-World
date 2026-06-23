@@ -541,8 +541,14 @@ class DreamXCameraSequence:
 
         unknown = [m for m in moves if m not in CAMERA_MOVES]
         if unknown:
+            # Check if user passed a number — common mistake (thinking slot1 = move count)
+            numeric = [m for m in unknown if m.strip().lstrip('-').isdigit()]
+            hint = (
+                " Tip: slot1 takes move NAMES (e.g. 'forward,arc_left'), not a count. "
+                "Use slot2 to set frames per chunk."
+            ) if numeric else ""
             raise ValueError(
-                f"Unknown move(s): {unknown}. "
+                f"Unknown move(s): {unknown}.{hint} "
                 f"Valid moves: {MOVE_NAMES}"
             )
 
