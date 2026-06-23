@@ -397,11 +397,25 @@ class DreamXModelLoader:
 
         pipeline = pipeline.to(dtype=torch.bfloat16)
 
-        # Mirror DreamX's own low_memory path (triggers for any card < 40 GB).
-        # DynamicSwap keeps T5 encoder in CPU RAM and moves individual layers to
-        # GPU only during text encoding, freeing ~11.4 GB for generator + KV cache.
-        from utils.memory import DynamicSwapInstaller
-        DynamicSwapInstaller.install_model(pipeline.text_encoder, device=device)
+        # Replace T5 text encoder with a null stub — image + camera conditioning only.
+        # The scene is defined by the init image; text conditioning adds little for
+        # navigation. Cutting T5 saves ~11.4 GB VRAM, eliminates DynamicSwap overhead,
+        # and removes ~20s of T5 init time per run.
+        # The stub returns a single zero token (batch, 1, text_dim=4096) so the
+        # cross-attention in the transformer gets no text signal.
+        _text_dim = 4096  # UMT5-XXL embedding dim, matches DreamX config
+        class _NullTextEncoder:
+            """Zero text encoder: camera + image conditioning only."""
+            def __call__(self, texts, *args, **kw):
+                batch = len(texts) if isinstance(texts, list) else 1
+                emb  = torch.zeros(batch, 1, _text_dim, device=device, dtype=torch.bfloat16)
+                lens = torch.ones(batch, dtype=torch.long, device=device)
+                return emb, lens
+            def to(self, *a, **kw): return self
+            def cpu(self): return self
+            def parameters(self): return iter([])
+        pipeline.text_encoder = _NullTextEncoder()
+        print("[DreamXModelLoader] T5 replaced with null encoder (image+camera only)")
 
         pipeline.generator.to(device=device)
         pipeline.vae.to(device=device)
