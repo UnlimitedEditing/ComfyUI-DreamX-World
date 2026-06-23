@@ -549,19 +549,28 @@ class DreamXCameraSequence:
         device = torch.device("cuda")
         num_pixel_frames = (frames_per_chunk - 1) * 4 + 1
 
-        # ── parse move_sequence supporting 'move_name' or 'move_name:speed' ────
-        # speed is 0.05–1.0: fraction of the chunk that is active camera motion.
-        # speed < 1.0 dilutes the trajectory with a static hold so the camera
-        # travels a shorter distance — effectively controlling how far each move goes.
-        # Examples:  "forward:1.0"  = full push
-        #            "arc_left:0.5" = half-arc (gentler turn)
-        #            "crane_up:0.2" = barely rises
+        # ── parse move_sequence tokens ────────────────────────────────────────────
+        # Supported formats (all case-insensitive for the move name):
+        #   "forward"          → speed 1.0, 1 chunk
+        #   "forward:0.5"      → speed 0.5, 1 chunk  (half distance)
+        #   "forward:1x6"      → speed 1.0, 6 chunks (repeat shorthand)
+        #   "arc_left:0.3x4"   → speed 0.3, 4 chunks (slow tight arcs x4)
+        # speed 0.05–1.0: fraction of chunk that is active motion; remainder is hold.
 
         def _parse_token(token):
             parts = token.strip().split(':', 1)
-            name = parts[0].strip()
-            spd  = float(parts[1]) if len(parts) > 1 else 1.0
-            spd  = max(0.05, min(spd, 1.0))
+            name  = parts[0].strip()
+            spec  = parts[1].strip() if len(parts) > 1 else "1"
+
+            # Split speed from optional repeat count: "0.5x3" → spd=0.5, count=3
+            if 'x' in spec.lower():
+                spd_str, cnt_str = spec.lower().split('x', 1)
+                spd   = float(spd_str) if spd_str else 1.0
+                count = max(1, int(cnt_str))
+            else:
+                spd   = float(spec)
+                count = 1
+            spd = max(0.05, min(spd, 1.0))
 
             if name not in CAMERA_MOVES:
                 numeric = name.lstrip('-').isdigit()
@@ -573,19 +582,21 @@ class DreamXCameraSequence:
 
             act, _ = CAMERA_MOVES[name]
             if spd >= 1.0 or not act:
-                tspec = [(act, 1)]          # full motion (or static)
+                tspec = [(act, 1)]
             else:
-                tspec = [(act, spd), ("", 1.0 - spd)]  # active fraction + hold
-            return name, act, spd, tspec
+                tspec = [(act, spd), ("", 1.0 - spd)]
+            return name, act, spd, count, tspec
 
         raw_tokens = [t for t in move_sequence.split(",") if t.strip()]
         if not raw_tokens:
             raise ValueError("move_sequence is empty — provide at least one move name.")
 
-        parsed = [_parse_token(t) for t in raw_tokens]   # raises on bad names
-
-        move_names  = [p[0] for p in parsed]
-        traj_specs  = [p[3] for p in parsed]
+        # Expand repeat counts: "forward:1x6" → 6 × (forward, 1.0) entries
+        parsed = []
+        for t in raw_tokens:
+            name, act, spd, count, tspec = _parse_token(t)
+            for _ in range(count):
+                parsed.append((name, act, spd, tspec))
 
         print(f"[DreamXCameraSequence] {len(parsed)} chunk(s): "
               + ", ".join(f"{p[0]}:{p[2]:.2f}" for p in parsed))
