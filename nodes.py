@@ -414,7 +414,20 @@ class DreamXModelLoader:
         _gen = pipeline.generator
         _orig_decode = pipeline.vae.decode_to_pixel
         def _decode_with_generator_offload(latents):
+            import gc
+            # Offload generator (~10.5 GB bf16)
             _gen.cpu()
+            # Clear KV cache — it persists on the pipeline after diffusion
+            # and consumes ~7-8 GB on 4090, causing VAE decode OOM.
+            for _obj in [pipeline, pipeline.generator,
+                          getattr(pipeline.generator, 'model', None)]:
+                if _obj is None:
+                    continue
+                for _attr in ('kv_cache', '_kv_cache', 'past_key_values',
+                               'k_cache', 'v_cache', 'cache'):
+                    if hasattr(_obj, _attr):
+                        setattr(_obj, _attr, None)
+            gc.collect()
             torch.cuda.empty_cache()
             out = _orig_decode(latents)
             _gen.to(device)
