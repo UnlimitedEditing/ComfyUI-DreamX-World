@@ -417,18 +417,45 @@ class DreamXModelLoader:
             import gc
             # Offload generator (~10.5 GB bf16)
             _gen.cpu()
-            # Clear KV cache — it persists on the pipeline after diffusion
-            # and consumes ~7-8 GB on 4090, causing VAE decode OOM.
+            # Nuke every CUDA tensor > 100 MB on the pipeline and its children.
+            # Attribute-name guessing failed (KV cache not found by name), so
+            # scan all object dicts and zero out any large CUDA tensors directly.
+            def _free_cuda_tensors(obj, depth=0):
+                if obj is None or depth > 3:
+                    return
+                try:
+                    d = vars(obj)
+                except TypeError:
+                    return
+                for k, v in list(d.items()):
+                    if isinstance(v, torch.Tensor):
+                        if v.device.type == 'cuda' and v.numel() * v.element_size() > 100e6:
+                            print(f"[decode-offload] freeing {type(obj).__name__}.{k}: "
+                                  f"{v.shape} {v.dtype} "
+                                  f"{v.numel()*v.element_size()/1e9:.2f}GB")
+                            setattr(obj, k, None)
+                    elif isinstance(v, (list, tuple)) and v:
+                        # check if it's a list of tensors or dicts-of-tensors (KV cache pattern)
+                        first = v[0] if v else None
+                        if isinstance(first, torch.Tensor) and first.device.type == 'cuda':
+                            total = sum(x.numel()*x.element_size() for x in v if isinstance(x, torch.Tensor))
+                            if total > 100e6:
+                                print(f"[decode-offload] freeing list {type(obj).__name__}.{k}: "
+                                      f"{len(v)} tensors {total/1e9:.2f}GB")
+                                setattr(obj, k, None)
+                        elif isinstance(first, dict):
+                            _free_cuda_tensors(type('_', (), first)(), depth+1)
+                    elif hasattr(v, '__dict__') and not isinstance(v, type):
+                        _free_cuda_tensors(v, depth+1)
+
             for _obj in [pipeline, pipeline.generator,
                           getattr(pipeline.generator, 'model', None)]:
-                if _obj is None:
-                    continue
-                for _attr in ('kv_cache', '_kv_cache', 'past_key_values',
-                               'k_cache', 'v_cache', 'cache'):
-                    if hasattr(_obj, _attr):
-                        setattr(_obj, _attr, None)
+                _free_cuda_tensors(_obj)
             gc.collect()
             torch.cuda.empty_cache()
+            free_gb = (torch.cuda.get_device_properties(0).total_memory
+                       - torch.cuda.memory_allocated()) / 1e9
+            print(f"[decode-offload] VRAM free before decode: {free_gb:.1f} GB")
             out = _orig_decode(latents)
             _gen.to(device)
             return out
